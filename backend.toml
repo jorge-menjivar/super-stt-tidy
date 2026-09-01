@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#:schema https://jorge-menjivar.github.io/super-stt/backend.schema.json
+# Tidy — rule-based transcript cleanup. See docs/protocol/backend/config.md.
+
+[backend]
+    id = "app.super-stt.tidy"
+    source = "github.com/jorge-menjivar/super-stt-tidy"
+    name = "Tidy"
+    version = "0.1.0"
+    kind = "wasm"
+    entrypoint = "tidy.wasm"
+    contract = "v2"
+    license = "GPL-3.0-only"
+    description = "Tidies up dictated text before it is typed. Removes filler sounds, collapses stutters, repairs punctuation and spacing, and fixes sentence casing."
+
+[assets]
+    # Filename of the wasm component attached to the GitHub release. The indexer
+    # hashes these bytes into the registry's manifest pin; must match `entrypoint`.
+    wasm = "tidy.wasm"
+
+# No egress. Every rule is local string handling, so the component is granted
+# nothing — an empty list is the strongest statement this file can make.
+[network]
+    allowed_hosts = []
+
+    # One option per rule, so a user who disagrees with one can switch it off
+    # without losing the rest. All default to on: a post-processor the user
+    # deliberately enabled is being asked to clean up.
+
+[[options]]
+    name = "normalize_unicode"
+    label = "Normalize punctuation"
+    description = "Fold smart quotes, dashes and ellipses to ASCII, and strip zero-width and control characters."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "remove_fillers"
+    label = "Remove filler sounds"
+    description = "Drop vocalized fillers: um, uh, erm, hmm and similar. Only sounds are removed — words like \"like\" and \"so\" are left alone, since no rule can tell a filler from the real word."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "dedupe_words"
+    label = "Collapse stutters"
+    description = "Collapse an immediately repeated word (\"the the\" becomes \"the\"). Words that legitimately double, such as \"had had\" and \"that that\", are exempt."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "fix_punctuation"
+    label = "Repair punctuation spacing"
+    description = "Remove spaces before punctuation, ensure one space after it, collapse doubled marks, and unpad brackets."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "collapse_whitespace"
+    label = "Collapse whitespace"
+    description = "Reduce every run of spaces, tabs and newlines to a single space, and trim the ends."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "sentence_case"
+    label = "Fix sentence casing"
+    description = "Capitalize the first letter of each sentence and the standalone pronoun \"i\". Other casing is left as the transcription model produced it."
+    type = "bool"
+    default = true
+
+# A post-processor: the daemon drives this model over POST /v1/process with a
+# finished transcript, never over /v1/transcribe. Selected in the settings app
+# under Models → Post-processing.
+#
+# The rules are English-oriented — the filler list and the sentence casing in
+# particular — so the model declares English rather than claiming a breadth it
+# does not have. The whitespace, Unicode and punctuation rules are
+# language-agnostic and do no harm elsewhere.
+[[models]]
+    name = "rules-v1"
+    role = "post_processor"
+    multilingual = false
+    primary_language = "en"
+    supported_languages = ["en"]
+    # Pure string handling: it runs on the CPU and needs no accelerator.
+    supported_devices = ["cpu"]

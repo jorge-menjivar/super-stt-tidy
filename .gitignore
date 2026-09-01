@@ -1,0 +1,11 @@
+/target
+
+# Build artifact staged by `just stage` under the entrypoint name `backend.toml`
+# declares. A local, installable copy of the component — never committed; the
+# release workflow builds its own from source.
+/tidy.wasm
+
+# Coverage artifacts (cargo-llvm-cov).
+/lcov.info
+*.profraw
+*.profdata
