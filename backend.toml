@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-#:schema https://jorge-menjivar.github.io/super-stt/backend.schema.json
+#:schema https://jorge-menjivar.github.io/super-voice/backend.schema.json
 # Tidy — rule-based transcript cleanup. See docs/protocol/backend/config.md.
 
 [backend]
@@ -9,7 +9,8 @@
     version = "0.1.0"
     kind = "wasm"
     entrypoint = "tidy.wasm"
-    contract = "v2"
+    product  = "super-voice"
+    contract = "v1"
     license = "GPL-3.0-only"
     description = "Tidies up dictated text before it is typed. Removes filler sounds, collapses stutters, repairs punctuation and spacing, and fixes sentence casing."
 
