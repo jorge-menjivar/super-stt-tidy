@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Tidy: a standalone transcript-cleanup WASM backend. Depends only on third-party
-# crates — no super-stt code. Its own workspace root, with its own Cargo.lock.
+# crates — no Super Voice code. Its own workspace root, with its own Cargo.lock.
 #
 # The library is a `wasi:http` component (cdylib) built for wasm32-wasip2; the
 # `rlib` target lets the cleanup rules be unit-tested on the host, where the
 # wasi handler is cfg'd out.
 [package]
-    name = "super-stt-backend-tidy"
-    version = "0.1.0"
+    name = "super-voice-backend-tidy"
+    version = "0.2.0"
     edition = "2024"
     license = "GPL-3.0-only"
     publish = false

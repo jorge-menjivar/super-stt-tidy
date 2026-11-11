@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
-#:schema https://jorge-menjivar.github.io/super-stt/backend.schema.json
+#:schema https://jorge-menjivar.github.io/super-voice/backend.schema.json
 # Tidy — rule-based transcript cleanup. See docs/protocol/backend/config.md.
 
 [backend]
-    id = "app.super-stt.tidy"
+    # The id names the install directory. An install under the old id,
+    # app.super-stt.tidy, moves to this one on update, because the daemon
+    # finds it by `source`.
+    id = "app.super-voice.tidy"
+    # `source` is the backend's identity: installed copies find their updates
+    # by it, and the user's settings and selected model are named by it. So it
+    # keeps the repository's name from when Tidy was first published.
     source = "github.com/jorge-menjivar/super-stt-tidy"
     name = "Tidy"
-    version = "0.1.0"
+    version = "0.2.0"
     kind = "wasm"
     entrypoint = "tidy.wasm"
     contract = "v2"

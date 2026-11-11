@@ -10,7 +10,7 @@
 //! module compiles for the host, so all of it is unit-tested natively.
 
 /// Which rules run. Each maps to a `[[options]]` entry in `backend.toml`, read
-/// off the `x-stt-option-*` headers the daemon injects.
+/// off the `x-voice-option-*` headers the daemon injects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
