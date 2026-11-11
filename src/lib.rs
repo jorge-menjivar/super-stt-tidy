@@ -78,9 +78,28 @@ pub fn parse_process_body(body: &[u8]) -> Result<String, &'static str> {
     Ok(text.to_string())
 }
 
+/// Look up a request header by name, ignoring case.
+///
+/// Ask for the `x-voice-…` name. A header that is absent under it is looked
+/// up under its Super STT name, `x-stt-…`: a Super Voice daemon sends every
+/// header under both, and a Super STT daemon only under the old one.
+#[must_use]
+pub fn header(entries: &[(String, Vec<u8>)], want: &str) -> Option<String> {
+    let find = |name: &str| {
+        entries
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
+    };
+    find(want).or_else(|| {
+        let rest = want.strip_prefix("x-voice-")?;
+        find(&format!("x-stt-{rest}"))
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 mod component {
-    use super::{MODEL, clean, parse_process_body, rules_from_options};
+    use super::{MODEL, clean, header, parse_process_body, rules_from_options};
 
     use wasi::exports::http::incoming_handler::Guest;
     use wasi::http::types::{
@@ -150,7 +169,7 @@ mod component {
     /// headers, clean the submitted transcript, and return it.
     fn process(request: &IncomingRequest) -> (u16, Vec<u8>) {
         let entries = request.headers().entries();
-        let rules = rules_from_options(|name| header(&entries, &format!("x-stt-option-{name}")));
+        let rules = rules_from_options(|name| header(&entries, &format!("x-voice-option-{name}")));
 
         let Ok(incoming) = request.consume() else {
             return err(400, "invalid_text");
@@ -182,14 +201,6 @@ mod component {
 
     fn to_vec(value: &serde_json::Value) -> Vec<u8> {
         serde_json::to_vec(value).unwrap_or_default()
-    }
-
-    /// Case-insensitive header lookup over `Fields::entries()`.
-    fn header(entries: &[(String, Vec<u8>)], want: &str) -> Option<String> {
-        entries
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(want))
-            .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
     }
 
     /// Drain an incoming body to bytes.
@@ -231,7 +242,14 @@ mod component {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rules, flag, parse_process_body, rules_from_options};
+    use super::{Rules, flag, header, parse_process_body, rules_from_options};
+
+    fn headers(pairs: &[(&str, &str)]) -> Vec<(String, Vec<u8>)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.as_bytes().to_vec()))
+            .collect()
+    }
 
     #[test]
     fn flag_reads_the_spellings_a_settings_field_can_hold() {
@@ -292,5 +310,43 @@ mod tests {
         ] {
             assert_eq!(parse_process_body(body), Err("invalid_text"));
         }
+    }
+
+    #[test]
+    fn an_option_is_read_under_its_super_voice_name() {
+        let entries = headers(&[("X-Voice-Option-remove_fillers", "false")]);
+        assert_eq!(
+            header(&entries, "x-voice-option-remove_fillers").as_deref(),
+            Some("false")
+        );
+    }
+
+    /// A Super STT daemon sends only the `x-stt-` names.
+    #[test]
+    fn an_option_sent_only_under_its_super_stt_name_is_still_read() {
+        let entries = headers(&[("x-stt-option-remove_fillers", "false")]);
+        assert_eq!(
+            header(&entries, "x-voice-option-remove_fillers").as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn the_super_voice_name_wins_when_both_are_sent() {
+        let entries = headers(&[
+            ("x-stt-option-sentence_case", "true"),
+            ("x-voice-option-sentence_case", "false"),
+        ]);
+        assert_eq!(
+            header(&entries, "x-voice-option-sentence_case").as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn an_unsent_option_is_none() {
+        let entries = headers(&[("x-voice-option-dedupe_words", "true")]);
+        assert_eq!(header(&entries, "x-voice-option-remove_fillers"), None);
+        assert_eq!(header(&entries, "x-voice-model"), None);
     }
 }
