@@ -12,7 +12,7 @@
     # keeps the repository's name from when Tidy was first published.
     source = "github.com/jorge-menjivar/super-stt-tidy"
     name = "Tidy"
-    version = "0.1.0"
+    version = "0.2.0"
     kind = "wasm"
     entrypoint = "tidy.wasm"
     contract = "v2"
