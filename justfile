@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Task runner for Tidy, the standalone transcript-cleanup WASM backend. Mirrors the
-# recipe names used by the main super-stt repo (`just check`, `just ci`, etc.).
+# recipe names used by the main Super Voice repo (`just check`, `just ci`, etc.).
 #
 # `just --list` shows only the last comment line before a recipe, so any recipe
 # whose comment runs to more than one line carries a [doc("…")] summary for the
@@ -31,7 +31,7 @@ build-component *args:
 # published one stage the same bytes under the same name.
 [doc("Build and stage tidy.wasm for Import-from-dir")]
 stage: build-component
-    cp target/wasm32-wasip2/release/super_stt_backend_tidy.wasm tidy.wasm
+    cp target/wasm32-wasip2/release/super_voice_backend_tidy.wasm tidy.wasm
     @echo "staged tidy.wasm — this directory is now installable with Import from dir"
 
 # Lint the shipped component on its real target (wasm32-wasip2). The host build

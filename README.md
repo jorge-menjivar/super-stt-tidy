@@ -1,4 +1,4 @@
-# Tidy — a Super STT post-processor
+# Tidy — a Super Voice post-processor
 
 [![coverage](https://img.shields.io/endpoint?url=https://jorge-menjivar.github.io/super-stt-tidy/coverage.json)](https://jorge-menjivar.github.io/super-stt-tidy/)
 
@@ -12,7 +12,7 @@ So I think that we should ship it, today.
 ```
 
 This is a **post-processor** backend for
-[Super STT](https://github.com/jorge-menjivar/super-stt): the daemon hands it a
+[Super Voice](https://github.com/jorge-menjivar/super-voice): the daemon hands it a
 finished transcript on `POST /v1/process` and it hands back a cleaned one. It
 does not transcribe audio.
 
@@ -102,7 +102,7 @@ Adding a rule means: a function plus its tests in `clean.rs`, a field on
 
 ## Protocol
 
-Implements the [Super STT backend contract](https://github.com/jorge-menjivar/super-stt/blob/main/docs/protocol/backend/contract.md)
+Implements the [Super Voice backend contract](https://github.com/jorge-menjivar/super-voice/blob/main/docs/protocol/backend/contract.md)
 for the post-processor role:
 
 | Route | Behavior |

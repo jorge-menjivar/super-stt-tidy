@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Transcript cleanup backend as a `wasi:http` proxy component.
 //!
-//! Implements the Super STT `/v1` backend contract
+//! Implements the Super Voice `/v1` backend contract
 //! (`docs/protocol/backend/contract.md`) for the **post-processor** role: the
 //! daemon hands it a finished transcript on `POST /v1/process` and it hands
 //! back a tidied one.

@@ -81,7 +81,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "super-stt-backend-tidy"
+name = "super-voice-backend-tidy"
 version = "0.1.0"
 dependencies = [
  "serde_json",
