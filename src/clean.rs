@@ -9,6 +9,8 @@
 //! Nothing here is a model. Every rule is a rule you can read, and the whole
 //! module compiles for the host, so all of it is unit-tested natively.
 
+use std::ops::Range;
+
 /// Which rules run. Each maps to a `[[options]]` entry in `backend.toml`, read
 /// off the `x-voice-option-*` headers the daemon injects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +31,8 @@ pub struct Rules {
     pub collapse_whitespace: bool,
     /// Capitalize sentence starts and the standalone pronoun "i".
     pub sentence_case: bool,
+    /// Write the user's vocabulary terms the way they spelled them.
+    pub vocabulary_spelling: bool,
 }
 
 impl Default for Rules {
@@ -43,6 +47,7 @@ impl Default for Rules {
             fix_punctuation: true,
             collapse_whitespace: true,
             sentence_case: true,
+            vocabulary_spelling: true,
         }
     }
 }
@@ -67,22 +72,27 @@ const LEGITIMATE_DOUBLES: &[&str] = &["had", "that", "is", "was", "no"];
 
 /// Run the enabled rules over `text`, in the order they have to run in.
 ///
+/// `vocabulary` is the user's: terms spelled the way they want them, from
+/// their dictation context. The token rules never cut a term out of it, and
+/// [`respell_vocabulary`] writes terms in the user's spelling.
+///
 /// Order matters and is not configurable: Unicode folding first so later rules
 /// see ASCII punctuation; token rules next while whitespace still separates
 /// tokens; spacing repair after, since removing a token can strand a comma;
-/// whitespace collapse after that, to absorb what the earlier rules left; and
-/// casing last, so it sees final sentence boundaries.
+/// whitespace collapse after that, to absorb what the earlier rules left;
+/// casing after that, so it sees final sentence boundaries; and the user's
+/// spellings last, so "iPhone" survives starting a sentence.
 #[must_use]
-pub fn clean(text: &str, rules: &Rules) -> String {
+pub fn clean(text: &str, rules: &Rules, vocabulary: &[String]) -> String {
     let mut out = text.to_string();
     if rules.normalize_unicode {
         out = normalize_unicode(&out);
     }
     if rules.remove_fillers {
-        out = remove_fillers(&out);
+        out = remove_fillers(&out, vocabulary);
     }
     if rules.dedupe_words {
-        out = dedupe_words(&out);
+        out = dedupe_words(&out, vocabulary);
     }
     if rules.fix_punctuation {
         out = fix_punctuation(&out);
@@ -92,6 +102,9 @@ pub fn clean(text: &str, rules: &Rules) -> String {
     }
     if rules.sentence_case {
         out = sentence_case(&out);
+    }
+    if rules.vocabulary_spelling {
+        out = respell_vocabulary(&out, vocabulary);
     }
     out
 }
@@ -141,6 +154,29 @@ fn core_word(token: &str) -> String {
         .collect()
 }
 
+/// Where the user's vocabulary terms occur among `tokens`, as token ranges.
+///
+/// Words are compared the way the token rules see them, through [`core_word`],
+/// so neither case nor the punctuation stuck to a token hides a term.
+fn term_spans(tokens: &[&str], vocabulary: &[String]) -> Vec<Range<usize>> {
+    let cores: Vec<String> = tokens.iter().map(|token| core_word(token)).collect();
+    let mut spans = Vec::new();
+    for term in vocabulary {
+        let words: Vec<String> = term.split_whitespace().map(core_word).collect();
+        // A term with nothing a token rule could match, "" or "--", names no
+        // words to keep.
+        if words.is_empty() || words.iter().any(String::is_empty) {
+            continue;
+        }
+        for (start, window) in cores.windows(words.len()).enumerate() {
+            if window == words.as_slice() {
+                spans.push(start..start + words.len());
+            }
+        }
+    }
+    spans
+}
+
 /// The sentence-ending punctuation a token carries, if any.
 fn terminal_punctuation(token: &str) -> Option<char> {
     token.chars().rev().find(|c| matches!(c, '.' | '!' | '?'))
@@ -151,13 +187,19 @@ fn terminal_punctuation(token: &str) -> Option<char> {
 /// A dropped token's sentence-ending punctuation moves onto the previous word,
 /// so "I think, um. We should" does not lose the full stop that ended the
 /// sentence.
+///
+/// A token inside one of the user's `vocabulary` terms stays, filler or not:
+/// "Ah" in "Ah Puch" is a name the user said.
 #[must_use]
-pub fn remove_fillers(text: &str) -> String {
+pub fn remove_fillers(text: &str, vocabulary: &[String]) -> String {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let spans = term_spans(&tokens, vocabulary);
     let mut out: Vec<String> = Vec::new();
-    for token in text.split_whitespace() {
+    for (i, token) in tokens.iter().enumerate() {
         let core = core_word(token);
-        if core.is_empty() || !FILLERS.contains(&core.as_str()) {
-            out.push(token.to_string());
+        let in_term = spans.iter().any(|span| span.contains(&i));
+        if in_term || core.is_empty() || !FILLERS.contains(&core.as_str()) {
+            out.push((*token).to_string());
             continue;
         }
         if let Some(mark) = terminal_punctuation(token)
@@ -174,25 +216,34 @@ pub fn remove_fillers(text: &str) -> String {
 ///
 /// When the repeat carries punctuation the first copy does not — "the the," —
 /// the later token wins, so the comma is not dropped along with the stutter.
+///
+/// A double inside one of the user's `vocabulary` terms is said on purpose,
+/// "Bora Bora", and stays. A term does not protect its own stutter: with
+/// "Rust" in the vocabulary, "Rust Rust" is still one word too many.
 #[must_use]
-pub fn dedupe_words(text: &str) -> String {
+pub fn dedupe_words(text: &str, vocabulary: &[String]) -> String {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let spans = term_spans(&tokens, vocabulary);
     let mut out: Vec<String> = Vec::new();
     let mut previous = String::new();
-    for token in text.split_whitespace() {
+    for (i, token) in tokens.iter().enumerate() {
         let core = core_word(token);
-        let repeats =
-            !core.is_empty() && core == previous && !LEGITIMATE_DOUBLES.contains(&core.as_str());
+        let doubled_in_term = spans.iter().any(|span| span.start < i && i < span.end);
+        let repeats = !core.is_empty()
+            && core == previous
+            && !LEGITIMATE_DOUBLES.contains(&core.as_str())
+            && !doubled_in_term;
         if repeats {
             // Keep whichever copy carries punctuation; otherwise drop this one.
             if token.chars().any(|c| !c.is_alphanumeric() && c != '\'')
                 && let Some(last) = out.last_mut()
             {
-                *last = token.to_string();
+                *last = (*token).to_string();
             }
             continue;
         }
         previous = core;
-        out.push(token.to_string());
+        out.push((*token).to_string());
     }
     out.join(" ")
 }
@@ -326,12 +377,102 @@ fn capitalize_lone_i(text: &str) -> String {
     out.join(" ")
 }
 
+/// Write the user's vocabulary terms the way they spelled them, where the
+/// text has them in other letter case: "iphone" becomes "iPhone".
+///
+/// Only the case of letters already there changes, so no word is added,
+/// dropped or swapped. A term matches whole words only, and the words of a
+/// term may be separated by any whitespace. Only a term whose spelling could
+/// not be an ordinary word's is applied; see [`carries_spelling`].
+#[must_use]
+pub fn respell_vocabulary(text: &str, vocabulary: &[String]) -> String {
+    let mut chars: Vec<char> = text.chars().collect();
+    for term in vocabulary.iter().filter(|term| carries_spelling(term)) {
+        let words: Vec<Vec<char>> = term
+            .split_whitespace()
+            .map(|word| word.chars().collect())
+            .collect();
+        let mut at = 0;
+        while at < chars.len() {
+            match match_term(&chars, at, &words) {
+                Some((spelled, end)) => {
+                    for (i, ch) in spelled {
+                        chars[i] = ch;
+                    }
+                    at = end;
+                }
+                None => at += 1,
+            }
+        }
+    }
+    chars.into_iter().collect()
+}
+
+/// Whether the text should be brought round to a term's spelling.
+///
+/// Yes for a term of several words with a capital in it ("Super Voice"), and
+/// for a word with a capital past its first letter and a lowercase letter
+/// somewhere ("iPhone", "GitHub", "macOS"). No for a single word that is all
+/// capitals, all lowercase or merely capitalized: "IT", "rebase" and "Go" are
+/// ordinary words too, and applying them would recase every "it", every
+/// "Rebase" starting a sentence and every "go".
+fn carries_spelling(term: &str) -> bool {
+    match term.split_whitespace().collect::<Vec<_>>().as_slice() {
+        [] => false,
+        [word] => {
+            word.chars().skip(1).any(char::is_uppercase) && word.chars().any(char::is_lowercase)
+        }
+        _ => term.chars().any(char::is_uppercase),
+    }
+}
+
+/// Match `words` at `start` in `chars`, ignoring case. Returns each matched
+/// position with the letter the term spells there, and where the match ends.
+fn match_term(
+    chars: &[char],
+    start: usize,
+    words: &[Vec<char>],
+) -> Option<(Vec<(usize, char)>, usize)> {
+    if start > 0 && chars[start - 1].is_alphanumeric() {
+        return None;
+    }
+    let mut at = start;
+    let mut spelled = Vec::new();
+    for (k, word) in words.iter().enumerate() {
+        if k > 0 {
+            let gap = at;
+            while chars.get(at).is_some_and(|c| c.is_whitespace()) {
+                at += 1;
+            }
+            if at == gap {
+                return None;
+            }
+        }
+        for &want in word {
+            let have = *chars.get(at)?;
+            if have != want && !have.to_lowercase().eq(want.to_lowercase()) {
+                return None;
+            }
+            spelled.push((at, want));
+            at += 1;
+        }
+    }
+    if chars.get(at).is_some_and(|c| c.is_alphanumeric()) {
+        return None;
+    }
+    Some((spelled, at))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Rules, clean, collapse_whitespace, dedupe_words, fix_punctuation, normalize_unicode,
-        remove_fillers, sentence_case,
+        remove_fillers, respell_vocabulary, sentence_case,
     };
+
+    fn vocabulary(terms: &[&str]) -> Vec<String> {
+        terms.iter().map(ToString::to_string).collect()
+    }
 
     // ── unicode ────────────────────────────────────────────────────────────
 
@@ -375,7 +516,7 @@ mod tests {
     #[test]
     fn vocalized_fillers_are_removed() {
         assert_eq!(
-            remove_fillers("um so uh I think erm we should ship it"),
+            remove_fillers("um so uh I think erm we should ship it", &[]),
             "so I think we should ship it"
         );
     }
@@ -383,7 +524,7 @@ mod tests {
     #[test]
     fn a_filler_with_a_comma_takes_the_comma_with_it() {
         assert_eq!(
-            remove_fillers("I think, um, we should"),
+            remove_fillers("I think, um, we should", &[]),
             "I think, we should"
         );
     }
@@ -393,7 +534,7 @@ mod tests {
     #[test]
     fn a_filler_ending_a_sentence_leaves_the_full_stop_behind() {
         assert_eq!(
-            remove_fillers("that is all um. Next thing"),
+            remove_fillers("that is all um. Next thing", &[]),
             "that is all. Next thing"
         );
     }
@@ -410,31 +551,31 @@ mod tests {
             "a hum in the room",
             "the ahead of us",
         ] {
-            assert_eq!(remove_fillers(text), text, "rewrote: {text}");
+            assert_eq!(remove_fillers(text, &[]), text, "rewrote: {text}");
         }
     }
 
     /// Case and trailing punctuation do not hide a filler.
     #[test]
     fn fillers_are_matched_regardless_of_case_or_punctuation() {
-        assert_eq!(remove_fillers("Um, hello"), "hello");
-        assert_eq!(remove_fillers("HMM hello"), "hello");
+        assert_eq!(remove_fillers("Um, hello", &[]), "hello");
+        assert_eq!(remove_fillers("HMM hello", &[]), "hello");
     }
 
     // ── dedupe ─────────────────────────────────────────────────────────────
 
     #[test]
     fn a_stuttered_word_collapses() {
-        assert_eq!(dedupe_words("the the cat sat"), "the cat sat");
-        assert_eq!(dedupe_words("I I think"), "I think");
+        assert_eq!(dedupe_words("the the cat sat", &[]), "the cat sat");
+        assert_eq!(dedupe_words("I I think", &[]), "I think");
     }
 
     /// English doubles some words legitimately; the rule must not "fix" them.
     #[test]
     fn legitimate_doubles_survive() {
-        assert_eq!(dedupe_words("I had had enough"), "I had had enough");
+        assert_eq!(dedupe_words("I had had enough", &[]), "I had had enough");
         assert_eq!(
-            dedupe_words("the thing that that broke"),
+            dedupe_words("the thing that that broke", &[]),
             "the thing that that broke"
         );
     }
@@ -443,12 +584,15 @@ mod tests {
     /// not collapsed away with the stutter.
     #[test]
     fn the_punctuated_copy_of_a_stutter_wins() {
-        assert_eq!(dedupe_words("well well, no"), "well, no");
+        assert_eq!(dedupe_words("well well, no", &[]), "well, no");
     }
 
     #[test]
     fn non_adjacent_repeats_are_left_alone() {
-        assert_eq!(dedupe_words("the cat and the dog"), "the cat and the dog");
+        assert_eq!(
+            dedupe_words("the cat and the dog", &[]),
+            "the cat and the dog"
+        );
     }
 
     // ── punctuation ────────────────────────────────────────────────────────
@@ -541,7 +685,7 @@ mod tests {
     fn a_raw_dictation_transcript_comes_out_clean() {
         let raw = "um so i i think that uh we should  ship it \u{2014} you know , today .";
         assert_eq!(
-            clean(raw, &Rules::default()),
+            clean(raw, &Rules::default(), &[]),
             "So I think that we should ship it - you know, today."
         );
     }
@@ -556,8 +700,9 @@ mod tests {
             fix_punctuation: false,
             collapse_whitespace: false,
             sentence_case: false,
+            vocabulary_spelling: false,
         };
-        assert_eq!(clean(raw, &off), raw, "all rules off must be a no-op");
+        assert_eq!(clean(raw, &off, &[]), raw, "all rules off must be a no-op");
     }
 
     /// Rules are independent: switching one off leaves the others working.
@@ -568,13 +713,13 @@ mod tests {
             remove_fillers: false,
             ..Rules::default()
         };
-        assert_eq!(clean(raw, &keep_fillers), "Um the thing");
+        assert_eq!(clean(raw, &keep_fillers, &[]), "Um the thing");
 
         let keep_stutter = Rules {
             dedupe_words: false,
             ..Rules::default()
         };
-        assert_eq!(clean(raw, &keep_stutter), "The the thing");
+        assert_eq!(clean(raw, &keep_stutter, &[]), "The the thing");
     }
 
     /// Cleaning something already clean must not change it. This is the
@@ -588,8 +733,8 @@ mod tests {
             "\u{201C}hello\u{201D} \u{2014} she said\u{2026}",
             "wait.. what?? really",
         ] {
-            let once = clean(raw, &Rules::default());
-            let twice = clean(&once, &Rules::default());
+            let once = clean(raw, &Rules::default(), &[]);
+            let twice = clean(&once, &Rules::default(), &[]);
             assert_eq!(once, twice, "second pass changed: {raw:?} -> {once:?}");
         }
     }
@@ -599,13 +744,13 @@ mod tests {
     /// than a lost transcript.
     #[test]
     fn an_all_filler_transcript_cleans_to_nothing() {
-        assert_eq!(clean("um uh hmm", &Rules::default()), "");
+        assert_eq!(clean("um uh hmm", &Rules::default(), &[]), "");
     }
 
     #[test]
     fn empty_and_whitespace_input_stay_empty() {
-        assert_eq!(clean("", &Rules::default()), "");
-        assert_eq!(clean("   \n ", &Rules::default()), "");
+        assert_eq!(clean("", &Rules::default(), &[]), "");
+        assert_eq!(clean("   \n ", &Rules::default(), &[]), "");
     }
 
     /// The rules must never panic on adversarial input; a post-processor that
@@ -621,7 +766,163 @@ mod tests {
             "a".repeat(10_000).as_str(),
             "é\u{0301}",
         ] {
-            let _ = clean(raw, &Rules::default());
+            let _ = clean(raw, &Rules::default(), &[]);
+        }
+    }
+
+    // ── the user's vocabulary ──────────────────────────────────────────────
+
+    #[test]
+    fn a_term_is_written_the_way_the_user_spelled_it() {
+        let terms = vocabulary(&["iPhone", "GitHub", "CubeCL"]);
+        assert_eq!(
+            respell_vocabulary("my iphone, a github repo and IPHONE again", &terms),
+            "my iPhone, a GitHub repo and iPhone again"
+        );
+        assert_eq!(
+            respell_vocabulary("cubecl's kernels", &terms),
+            "CubeCL's kernels"
+        );
+    }
+
+    /// Only whole words: a term is not respelled inside a longer word.
+    #[test]
+    fn a_term_inside_a_longer_word_is_left_alone() {
+        let terms = vocabulary(&["GitHub", "iOS"]);
+        assert_eq!(
+            respell_vocabulary("githubusercontent and bios", &terms),
+            "githubusercontent and bios"
+        );
+    }
+
+    #[test]
+    fn a_term_of_several_words_is_matched_across_any_whitespace() {
+        let terms = vocabulary(&["Super Voice"]);
+        assert_eq!(
+            respell_vocabulary("open super voice, then super\n  voice", &terms),
+            "open Super Voice, then Super\n  Voice"
+        );
+        assert_eq!(respell_vocabulary("supervoice", &terms), "supervoice");
+    }
+
+    /// A single word that is all capitals, all lowercase or merely capitalized
+    /// is an ordinary word too. Applying it would rewrite the user's sentences
+    /// instead of their term.
+    #[test]
+    fn a_term_that_is_also_an_ordinary_word_recases_nothing() {
+        let terms = vocabulary(&["Go", "IT", "rebase", "Rust", "main branch"]);
+        for text in [
+            "we go home and it works",
+            "Rebase onto the main branch",
+            "Main branch is green, rust never sleeps",
+        ] {
+            assert_eq!(respell_vocabulary(text, &terms), text, "rewrote: {text}");
+        }
+    }
+
+    #[test]
+    fn a_term_keeps_its_spelling_starting_a_sentence() {
+        assert_eq!(
+            clean(
+                "iphone sales grew. so did macos.",
+                &Rules::default(),
+                &vocabulary(&["iPhone", "macOS"])
+            ),
+            "iPhone sales grew. So did macOS."
+        );
+    }
+
+    /// The vocabulary names words the user said on purpose, so the token rules
+    /// never cut one out.
+    #[test]
+    fn a_term_is_never_removed_as_a_filler() {
+        assert_eq!(
+            remove_fillers("um Ah Puch was a god", &vocabulary(&["Ah Puch"])),
+            "Ah Puch was a god"
+        );
+        assert_eq!(
+            remove_fillers("say hmm, uh, now", &vocabulary(&["hmm"])),
+            "say hmm, now"
+        );
+    }
+
+    #[test]
+    fn a_term_that_doubles_a_word_is_not_a_stutter() {
+        let terms = vocabulary(&["Bora Bora"]);
+        assert_eq!(
+            dedupe_words("we flew to Bora Bora", &terms),
+            "we flew to Bora Bora"
+        );
+        assert_eq!(dedupe_words("the the trip", &terms), "the trip");
+    }
+
+    /// A term protects the double it spells, not a stutter on itself.
+    #[test]
+    fn a_stutter_on_a_term_still_collapses() {
+        assert_eq!(
+            dedupe_words("Rust Rust is fast", &vocabulary(&["Rust"])),
+            "Rust is fast"
+        );
+    }
+
+    #[test]
+    fn a_dictated_transcript_comes_out_in_the_users_spelling() {
+        let terms = vocabulary(&["iPhone", "GitHub", "Bora Bora"]);
+        assert_eq!(
+            clean(
+                "um i pushed it to github from my iphone iphone in bora bora .",
+                &Rules::default(),
+                &terms
+            ),
+            "I pushed it to GitHub from my iPhone in Bora Bora."
+        );
+    }
+
+    #[test]
+    fn spelling_can_be_switched_off() {
+        let rules = Rules {
+            vocabulary_spelling: false,
+            ..Rules::default()
+        };
+        assert_eq!(
+            clean("my iphone", &rules, &vocabulary(&["iPhone"])),
+            "My iphone"
+        );
+    }
+
+    #[test]
+    fn cleaning_with_a_vocabulary_is_idempotent() {
+        let terms = vocabulary(&["iPhone", "Super Voice", "Bora Bora"]);
+        for raw in [
+            "iphone iphone in bora bora. super voice um works",
+            "IPHONE. iPhone.",
+        ] {
+            let once = clean(raw, &Rules::default(), &terms);
+            let twice = clean(&once, &Rules::default(), &terms);
+            assert_eq!(once, twice, "second pass changed: {raw:?} -> {once:?}");
+        }
+    }
+
+    /// Terms come from the user, so none of them may make a rule panic.
+    #[test]
+    fn odd_terms_do_not_panic() {
+        let terms = vocabulary(&[
+            "",
+            " ",
+            "--",
+            ",",
+            "\u{e9}\u{301}",
+            "A B C D E F",
+            "\u{130}stanbul",
+        ]);
+        for raw in [
+            "",
+            "a b c d e f",
+            "-- , --",
+            "istanbul \u{130}STANBUL",
+            "\u{e9}\u{301}",
+        ] {
+            let _ = clean(raw, &Rules::default(), &terms);
         }
     }
 }

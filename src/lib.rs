@@ -56,6 +56,7 @@ pub fn rules_from_options(lookup: impl Fn(&str) -> Option<String>) -> Rules {
         fix_punctuation: read("fix_punctuation", d.fix_punctuation),
         collapse_whitespace: read("collapse_whitespace", d.collapse_whitespace),
         sentence_case: read("sentence_case", d.sentence_case),
+        vocabulary_spelling: read("vocabulary_spelling", d.vocabulary_spelling),
     }
 }
 
@@ -76,6 +77,26 @@ pub fn parse_process_body(body: &[u8]) -> Result<String, &'static str> {
         return Err("invalid_text");
     }
     Ok(text.to_string())
+}
+
+/// Read the user's vocabulary from an `x-voice-vocabulary` header value: a
+/// JSON array of strings, each a term spelled the way the user wants it.
+///
+/// Terms are trimmed and blank ones dropped. A value that is not an array of
+/// strings reads as no vocabulary: the vocabulary refines a cleanup, so a
+/// header Tidy cannot read must not fail the transcript.
+#[must_use]
+pub fn parse_vocabulary(value: Option<&str>) -> Vec<String> {
+    let Some(Ok(serde_json::Value::Array(items))) = value.map(serde_json::from_str) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Look up a request header by name, ignoring case.
@@ -99,7 +120,7 @@ pub fn header(entries: &[(String, Vec<u8>)], want: &str) -> Option<String> {
 
 #[cfg(target_arch = "wasm32")]
 mod component {
-    use super::{MODEL, clean, header, parse_process_body, rules_from_options};
+    use super::{MODEL, clean, header, parse_process_body, parse_vocabulary, rules_from_options};
 
     use wasi::exports::http::incoming_handler::Guest;
     use wasi::http::types::{
@@ -170,6 +191,10 @@ mod component {
     fn process(request: &IncomingRequest) -> (u16, Vec<u8>) {
         let entries = request.headers().entries();
         let rules = rules_from_options(|name| header(&entries, &format!("x-voice-option-{name}")));
+        // The user's dictation context, sent because the manifest declares
+        // `context`. Only the vocabulary is read: the prompt is instructions,
+        // and rules cannot follow instructions.
+        let vocabulary = parse_vocabulary(header(&entries, "x-voice-vocabulary").as_deref());
 
         let Ok(incoming) = request.consume() else {
             return err(400, "invalid_text");
@@ -184,7 +209,7 @@ mod component {
 
         ok(&serde_json::json!({
             "status": "success",
-            "text": clean(&text, &rules),
+            "text": clean(&text, &rules, &vocabulary),
         }))
     }
 
@@ -242,7 +267,7 @@ mod component {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rules, flag, header, parse_process_body, rules_from_options};
+    use super::{Rules, flag, header, parse_process_body, parse_vocabulary, rules_from_options};
 
     fn headers(pairs: &[(&str, &str)]) -> Vec<(String, Vec<u8>)> {
         pairs
@@ -348,5 +373,28 @@ mod tests {
         let entries = headers(&[("x-voice-option-dedupe_words", "true")]);
         assert_eq!(header(&entries, "x-voice-option-remove_fillers"), None);
         assert_eq!(header(&entries, "x-voice-model"), None);
+    }
+
+    #[test]
+    fn a_vocabulary_header_yields_its_terms() {
+        assert_eq!(
+            parse_vocabulary(Some(r#"["CubeCL", " Burn ", "", "Menjiv\u00e1r"]"#)),
+            ["CubeCL", "Burn", "Menjiv\u{e1}r"]
+        );
+    }
+
+    /// A header Tidy cannot read costs the vocabulary, not the transcript.
+    #[test]
+    fn an_unreadable_vocabulary_is_none() {
+        for value in [
+            None,
+            Some(""),
+            Some("CubeCL"),
+            Some(r#""CubeCL""#),
+            Some("["),
+        ] {
+            assert_eq!(parse_vocabulary(value), Vec::<String>::new(), "{value:?}");
+        }
+        assert_eq!(parse_vocabulary(Some(r#"[1, "Burn", null]"#)), ["Burn"]);
     }
 }

@@ -24,7 +24,7 @@ fillers, repair spacing, restore casing. That makes this backend
 
 - **fast** — microseconds, not a model round trip, so dictation stays instant;
 - **private** — no network egress at all (`allowed_hosts = []`), so your
-  transcripts never leave the machine;
+  transcripts and your vocabulary never leave the machine;
 - **small** — a ~200 KB WebAssembly component, no weights to download;
 - **predictable** — every rule is a rule you can read, and the same input always
   produces the same output.
@@ -45,6 +45,14 @@ Each rule is a separate setting, on by default, switchable in
 | Repair punctuation spacing | `fix_punctuation` | No space before `,` `.` `!` `?`, one space after; doubled marks collapsed; brackets unpadded. |
 | Collapse whitespace | `collapse_whitespace` | Whitespace runs → one space, ends trimmed. |
 | Fix sentence casing | `sentence_case` | Capitalizes sentence starts and the standalone pronoun `i`. |
+| Spell your vocabulary | `vocabulary_spelling` | Writes the terms in your vocabulary your way: `iphone` → `iPhone`, `super voice` → `Super Voice`. |
+
+## Your vocabulary
+
+Tidy reads the vocabulary of your dictation context, the same one your speech
+model hears. It spells those terms the way you do, even starting a sentence,
+and never cuts one out: `Bora Bora` is not a stutter, and `Ah Puch` keeps its
+`Ah`.
 
 ## What it deliberately does not do
 
@@ -62,6 +70,12 @@ doesn't run:
   whitespace follows it — so `3.5` and `e.g.` stay intact.
 - **Nothing is added.** No rephrasing, no invented punctuation beyond spacing
   repair, no words you did not say.
+- **Ordinary words in your vocabulary recase nothing.** A single word that is
+  all capitals, all lowercase or just capitalized, like `IT`, `rebase` or `Go`,
+  is also an everyday word, so only terms like `iPhone`, `GitHub` or
+  `Super Voice` are spelled your way.
+- **Your prompt is not read.** It is instructions for a model, and rules
+  cannot follow instructions.
 
 Cleaning is **idempotent**: running an already-clean transcript through again
 changes nothing, so a transcript never degrades by passing through twice.
@@ -110,7 +124,7 @@ for the post-processor role:
 | `GET /v1/ping` | `pong`. |
 | `GET /v1/status` | Always `ready` — there are no weights to load. |
 | `POST /v1/load` | Accepted no-op. |
-| `POST /v1/process` | Cleans the submitted `text`; `400 invalid_text` when it is missing or blank. |
+| `POST /v1/process` | Cleans the submitted `text`, with the vocabulary from `x-voice-vocabulary`; `400 invalid_text` when it is missing or blank. |
 | `POST /v1/cancel` | `409 nothing_in_progress` — cleanup is synchronous. |
 | `POST /v1/transcribe` | `400 unsupported_role` — this backend does not transcribe. |
 
