@@ -1,6 +1,6 @@
 # Tidy — a Super Voice post-processor
 
-[![coverage](https://img.shields.io/endpoint?url=https://jorge-menjivar.github.io/super-stt-tidy/coverage.json)](https://jorge-menjivar.github.io/super-stt-tidy/)
+[![coverage](https://img.shields.io/endpoint?url=https://super-libre.github.io/super-voice-tidy/coverage.json)](https://super-libre.github.io/super-voice-tidy/)
 
 Tidies up dictated text before it is typed. It takes the transcript your speech
 model produced and cleans it up on the way to the cursor:

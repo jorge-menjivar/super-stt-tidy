@@ -7,9 +7,9 @@
     # app.super-stt.tidy, moves to this one on update, because the daemon
     # finds it by `source`.
     id = "app.super-voice.tidy"
-    # `source` is the backend's identity: installed copies find their updates
-    # by it, and the user's settings and selected model are named by it. So it
-    # keeps the repository's name from when Tidy was first published.
+    # The repository's old name, which GitHub redirects. `source` is the
+    # backend's identity: installed copies find their updates by it, and the
+    # user's settings and selected model are named by it.
     source = "github.com/jorge-menjivar/super-stt-tidy"
     name = "Tidy"
     version = "0.2.0"
