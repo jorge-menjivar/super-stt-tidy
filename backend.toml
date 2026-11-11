@@ -7,9 +7,9 @@
     # app.super-stt.tidy, moves to this one on update, because the daemon
     # finds it by `source`.
     id = "app.super-voice.tidy"
-    # `source` is the backend's identity: installed copies find their updates
-    # by it, and the user's settings and selected model are named by it. So it
-    # keeps the repository's name from when Tidy was first published.
+    # The repository's old name, which GitHub redirects. `source` is the
+    # backend's identity: installed copies find their updates by it, and the
+    # user's settings and selected model are named by it.
     source = "github.com/jorge-menjivar/super-stt-tidy"
     name = "Tidy"
     version = "0.2.0"
@@ -17,12 +17,18 @@
     entrypoint = "tidy.wasm"
     contract = "v2"
     license = "GPL-3.0-only"
-    description = "Tidies up dictated text before it is typed. Removes filler sounds, collapses stutters, repairs punctuation and spacing, and fixes sentence casing."
+    description = "Tidies up dictated text before it is typed. Removes filler sounds, collapses stutters, repairs punctuation and spacing, fixes sentence casing, and spells your vocabulary your way."
 
 [assets]
     # Filename of the wasm component attached to the GitHub release. The indexer
     # hashes these bytes into the registry's manifest pin; must match `entrypoint`.
     wasm = "tidy.wasm"
+
+# Hand Tidy the user's dictation context. It reads the vocabulary and not the
+# prompt: the prompt is instructions, and rules cannot follow instructions.
+# Nothing leaves the machine either way, since Tidy has no egress.
+[capabilities]
+    context = true
 
 # No egress. Every rule is local string handling, so the component is granted
 # nothing — an empty list is the strongest statement this file can make.
@@ -72,6 +78,13 @@
     name = "sentence_case"
     label = "Fix sentence casing"
     description = "Capitalize the first letter of each sentence and the standalone pronoun \"i\". Other casing is left as the transcription model produced it."
+    type = "bool"
+    default = true
+
+[[options]]
+    name = "vocabulary_spelling"
+    label = "Spell your vocabulary"
+    description = "Write terms from your dictation context's vocabulary the way you spelled them, where the transcript has them in other letter case: iphone becomes iPhone. Only terms with a capital inside a word, or of several words with a capital, are applied, so \"Go\" in your vocabulary never recases an ordinary \"go\"."
     type = "bool"
     default = true
 
